@@ -1,4 +1,5 @@
 import express from "express";
+import type { Response } from "express";
 import cors from "cors";
 import { JsonDB, Config } from "node-json-db";
 
@@ -30,6 +31,28 @@ function isValidUser(body: any): body is Omit<User, "id"> {
   );
 }
 
+// ---- exo 2 : long polling ----
+
+const waiting = new Map<Response, NodeJS.Timeout>();
+
+app.get("/users/poll", (_req, res) => {
+  // 204 si rien de neuf au bout de 30s
+  const timer = setTimeout(() => res.status(204).end(), 30_000);
+  waiting.set(res, timer);
+  res.on("close", () => {
+    clearTimeout(timer);
+    waiting.delete(res);
+  });
+});
+
+function notify(list: User[]) {
+  for (const [res, timer] of waiting) {
+    clearTimeout(timer);
+    res.json(list);
+  }
+  waiting.clear();
+}
+
 // ---- exo 0 : CRUD users ----
 
 app.get("/users", async (_req, res) => {
@@ -57,6 +80,7 @@ app.post("/users", async (req, res) => {
   const user: User = { id, name, username, email };
   // [] = push a la fin
   await db.push("/users[]", user);
+  notify([user]);
   res.status(201).json(user);
 });
 
@@ -103,7 +127,9 @@ async function fakeUser(): Promise<User> {
 
 // ajoute un user toutes les 5s
 setInterval(async () => {
-  await db.push("/users[]", await fakeUser());
+  const user = await fakeUser();
+  await db.push("/users[]", user);
+  notify([user]);
 }, 5000);
 
 // on exporte server pour socket.io plus tard
